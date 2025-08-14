@@ -8,8 +8,8 @@ import difflib
 from collections import defaultdict
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
-                             QHBoxLayout, QPushButton, QLabel, QFileDialog,
-                             QMessageBox, QTreeWidget, QTreeWidgetItem, QFormLayout, QSpinBox,
+                             QHBoxLayout, QPushButton, QLabel, QFileDialog, QFormLayout,
+                             QMessageBox, QTreeWidget, QTreeWidgetItem, QSpinBox,
                              QGroupBox, QHeaderView)
 from PyQt5.QtCore import Qt
 from pyvistaqt import QtInteractor
@@ -123,14 +123,22 @@ class FluteAssembler:
             result = result.cut(cutter)
         return result
 
-def cq_to_pyvista(cq_solid, quality=100):
-    """Convierte un objeto de CadQuery a PyVista para visualización."""
-    if cq_solid is None: return pv.PolyData()
+def cq_to_pyvista(cq_obj, quality=100):
+    """Convierte un objeto de CadQuery (Solid, Compound, Assembly) a PyVista para visualización."""
+    if cq_obj is None: return pv.PolyData()
     
-    tolerance = 0.5 / quality # Mayor calidad = menor tolerancia (malla más fina)
+    tolerance = 0.5 / quality
 
-    shape = cq_solid.val()
-    if not isinstance(shape, cq.Shape): shape = shape.toOCC()
+    # Extraer el objeto Shape subyacente que se puede teselar
+    if isinstance(cq_obj, cq.Assembly):
+        shape = cq_obj.toCompound()
+    elif isinstance(cq_obj, cq.Workplane):
+        shape = cq_obj.val()
+    elif isinstance(cq_obj, cq.Shape):
+        shape = cq_obj
+    else:
+        return pv.PolyData()
+    
     vertices_vector, faces = shape.tessellate(tolerance=tolerance)
     vertices_np = np.array([v.toTuple() for v in vertices_vector])
     if len(faces) == 0: return pv.PolyData()
@@ -146,7 +154,7 @@ class FluteBrowserApp(QMainWindow):
         self.setGeometry(100, 100, 1600, 1000)
 
         self.base_path = None
-        self.flutes_data = {} # Estructura: { "flute_name": { "part_name": cq_solid, ... } }
+        self.flutes_data = {} # Estructura: { "flute_name": { "part_name": {"solid": cq_solid, "data": internal_data}, ... } }
 
         main_widget = QWidget(); self.setCentralWidget(main_widget)
         main_layout = QHBoxLayout(main_widget)
@@ -217,7 +225,6 @@ class FluteBrowserApp(QMainWindow):
         for flute_dir in flute_dirs:
             flute_name = os.path.basename(flute_dir)
             
-            # Agrupar archivos por pieza (headjoint, left, etc.)
             part_files = defaultdict(dict)
             for filename in os.listdir(flute_dir):
                 if filename.endswith(".json"):
@@ -231,6 +238,7 @@ class FluteBrowserApp(QMainWindow):
 
             self.flutes_data[flute_name] = {}
             flute_item = QTreeWidgetItem(self.flute_tree, [flute_name])
+            flute_item.setData(0, Qt.UserRole, flute_name)
 
             for part_name, files in sorted(part_files.items()):
                 if 'internal' in files and 'external' in files:
@@ -243,7 +251,10 @@ class FluteBrowserApp(QMainWindow):
                         final_solid = assembler.assemble()
 
                         if final_solid:
-                            self.flutes_data[flute_name][part_name] = final_solid
+                            self.flutes_data[flute_name][part_name] = {
+                                "solid": final_solid,
+                                "data": internal_data
+                            }
                             part_item = QTreeWidgetItem(flute_item, [part_name])
                             part_item.setData(0, Qt.UserRole, (flute_name, part_name))
                     except Exception as e:
@@ -255,31 +266,87 @@ class FluteBrowserApp(QMainWindow):
         QMessageBox.information(self, "Proceso Completado", f"Se han cargado {len(self.flutes_data)} flautas.")
 
     def refresh_current_model(self):
-        """Refresca el modelo actual en el visor, típicamente al cambiar un parámetro."""
         current_item = self.flute_tree.currentItem()
         if current_item:
-            self.display_selected_model(current_item, 0, reset_camera=False)
+            self.on_item_selected(current_item, 0, reset_camera=False)
 
-    def on_item_selected(self, item, column):
-        """Maneja el evento de clic en un item del árbol."""
-        self.display_selected_model(item, column, reset_camera=True)
-
-    def display_selected_model(self, item, column, reset_camera=True):
+    def on_item_selected(self, item, column, reset_camera=True):
         item_data = item.data(0, Qt.UserRole)
-        if not item_data: return # Es un item de nivel superior (nombre de flauta)
+        if not item_data: return
 
-        flute_name, part_name = item_data
-        cq_solid = self.flutes_data.get(flute_name, {}).get(part_name)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.plotter_3d.clear()
 
-        if cq_solid:
-            print(f"Mostrando: {flute_name} - {part_name} (Calidad: {self.quality_input.value()})")
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            self.plotter_3d.clear()
-            pv_mesh = cq_to_pyvista(cq_solid, self.quality_input.value())
+        if isinstance(item_data, tuple):
+            flute_name, part_name = item_data
+            self.display_single_part(flute_name, part_name)
+        elif isinstance(item_data, str):
+            flute_name = item_data
+            self.display_full_flute(flute_name)
+
+        if reset_camera:
+            self.plotter_3d.reset_camera()
+        QApplication.restoreOverrideCursor()
+
+    def display_single_part(self, flute_name, part_name):
+        part_info = self.flutes_data.get(flute_name, {}).get(part_name)
+        if part_info and part_info.get("solid"):
+            print(f"Mostrando pieza: {flute_name} - {part_name} (Calidad: {self.quality_input.value()})")
+            pv_mesh = cq_to_pyvista(part_info["solid"], self.quality_input.value())
             self.plotter_3d.add_mesh(pv_mesh, color='tan', show_edges=True)
-            if reset_camera:
-                self.plotter_3d.reset_camera()
-            QApplication.restoreOverrideCursor()
+
+    def display_full_flute(self, flute_name):
+        """Ensambla y muestra todas las piezas de una flauta con la lógica de encaje correcta."""
+        flute_parts = self.flutes_data.get(flute_name)
+        if not flute_parts: return
+
+        print(f"Mostrando flauta completa: {flute_name} (Calidad: {self.quality_input.value()})")
+        
+        z_positions = {}
+        assembly_order = ["headjoint", "left", "right", "foot"]
+        colors = ["tan", "saddlebrown", "chocolate", "sienna"]
+
+        # --- LÓGICA DE POSICIONAMIENTO CORREGIDA ---
+        
+        # 1. Posicionar headjoint (base)
+        if 'headjoint' in flute_parts:
+            z_positions['headjoint'] = 0.0
+
+        # 2. Posicionar 'left' relativo a 'headjoint'
+        # Regla: headjoint recibe a left (mortaja en headjoint)
+        if 'headjoint' in flute_parts and 'left' in flute_parts:
+            headjoint_data = flute_parts['headjoint']['data']
+            headjoint_total_length = headjoint_data.get("Total length", 0)
+            headjoint_mortise_length = headjoint_data.get("Mortise length", 0)
+            z_positions['left'] = z_positions.get('headjoint', 0) + headjoint_total_length - headjoint_mortise_length
+
+        # 3. Posicionar 'right' relativo a 'left'
+        # Regla: right recibe a left (mortaja en right)
+        if 'left' in flute_parts and 'right' in flute_parts:
+            left_data = flute_parts['left']['data']
+            right_data = flute_parts['right']['data']
+            left_total_length = left_data.get("Total length", 0)
+            right_mortise_length = right_data.get("Mortise length", 0)
+            z_positions['right'] = z_positions.get('left', 0) + left_total_length - right_mortise_length
+
+        # 4. Posicionar 'foot' relativo a 'right'
+        # Regla: foot recibe a right (mortaja en foot)
+        if 'right' in flute_parts and 'foot' in flute_parts:
+            right_data = flute_parts['right']['data']
+            foot_data = flute_parts['foot']['data']
+            right_total_length = right_data.get("Total length", 0)
+            foot_mortise_length = foot_data.get("Mortise length", 0)
+            z_positions['foot'] = z_positions.get('right', 0) + right_total_length - foot_mortise_length
+
+        # --- Visualización ---
+        for i, part_name in enumerate(assembly_order):
+            part_info = flute_parts.get(part_name)
+            z_pos = z_positions.get(part_name)
+
+            if part_info and z_pos is not None:
+                positioned_solid = part_info["solid"].translate((0, 0, z_pos))
+                pv_mesh = cq_to_pyvista(positioned_solid, self.quality_input.value())
+                self.plotter_3d.add_mesh(pv_mesh, color=colors[i % len(colors)], show_edges=True)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
