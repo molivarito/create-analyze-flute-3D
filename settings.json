@@ -1,0 +1,16 @@
+{
+    // Configuración para el terminal integrado de VSCode.
+    // Esto asegura que al abrir una nueva terminal, el entorno de Python
+    // seleccionado para el espacio de trabajo se active automáticamente.
+    "python.terminal.activateEnvironment": true,
+
+    // --- ¡ACCIÓN REQUERIDA! ---
+    // Para que VSCode use tu entorno 'cq-env', por favor, sigue estos pasos:
+    // 1. Abre la Paleta de Comandos (View -> Command Palette... o Ctrl+Shift+P).
+    // 2. Escribe y selecciona "Python: Select Interpreter".
+    // 3. Elige tu entorno 'cq-env' de la lista que aparecerá.
+    //
+    // VSCode guardará la ruta a tu intérprete aquí automáticamente.
+    // Se verá algo como esto:
+    // "python.defaultInterpreterPath": "/home/user/miniconda3/envs/cq-env/bin/python"
+}

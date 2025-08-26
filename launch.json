@@ -1,0 +1,31 @@
+{
+    // Usa IntelliSense para saber los atributos posibles.
+    // Mantén el puntero para ver las descripciones de los existentes.
+    // Para más información, visita: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Archivo Actual",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Navegador de Flautas",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/navegador_flautas.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Visualizador 3D (Pieza)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/visualizador_flauta_3D.py",
+            "console": "integratedTerminal"
+        }
+    ]
+}
+
